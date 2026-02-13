@@ -1,22 +1,23 @@
 /**
  * Shared WebSocket URL detection for all environments:
- * - Codespaces: direct connection to port 3003 (auto-forwarded by Codespaces)
+ * - Vscode: direct connection to port 3003
  * - Localhost: direct connection to port 3003
- * - Production: env var or nginx proxy path
+ * - Production: same origin (nginx proxies /socket.io/ to port 3003)
  */
 export function getWebSocketUrl(): string {
-  // Production: use env var if set to a real domain
-  const envUrl = process.env.NEXT_PUBLIC_WS_URL;
-  if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
-    return envUrl;
+  if (typeof window === 'undefined') {
+    // SSR: use env var or default to localhost
+    const envUrl = process.env.NEXT_PUBLIC_WS_URL;
+    if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+      return envUrl;
+    }
+    return 'http://localhost:3003';
   }
-
-  if (typeof window === 'undefined') return 'http://localhost:3003';
 
   const hostname = window.location.hostname;
 
-  // Codespaces/GitHub.dev: connect directly to port 3003 URL
-  // Codespaces URL format: {name}-{port}.app.github.dev
+  // Vscode/GitHub.dev: connect directly to port 3003 URL
+  // Vscode URL format: {name}-{port}.app.github.dev
   // Replace the port number in the hostname to point to WebSocket server port
   if (hostname.includes('.app.github.dev')) {
     const wsHostname = hostname.replace(/-\d+\.app\.github\.dev$/, '-3003.app.github.dev');
@@ -29,7 +30,9 @@ export function getWebSocketUrl(): string {
     return `http://localhost:${wsPort}`;
   }
 
-  // Production with nginx proxy
-  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-  return `${protocol}//${hostname}/ws`;
+  // Production: return origin URL (same domain).
+  // nginx proxies /socket.io/ requests to the WebSocket server on port 3003.
+  // Socket.IO client will use default path /socket.io/ which nginx intercepts.
+  // Do NOT append /ws — that would create a Socket.IO namespace "/ws" which doesn't exist on the server.
+  return `${window.location.protocol}//${hostname}`;
 }
