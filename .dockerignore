@@ -1,0 +1,13 @@
+Dockerfile
+.dockerignore
+node_modules
+npm-debug.log
+.next
+.git
+yarn.lock
+pnpm-lock.yaml
+test
+*.log
+local-*
+dev.log
+deploy/ssl

@@ -1,0 +1,552 @@
+// Arc Spatial Intelligence - AI-Powered Robotics Fleet Management Platform
+// Complete Schema for Robotics Fleet Management
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ORGANIZATION & USER MANAGEMENT
+// ============================================
+
+model Organization {
+  id                String           @id @default(cuid())
+  name              String
+  plan              Plan             @default(STARTER)
+  maxRobots         Int              @default(3)
+  maxEnvironments   Int              @default(1)
+  settings          Json?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  users             User[]
+  environments      Environment[]
+  simulations       Simulation[]
+  subscriptions     Subscription[]
+
+  @@index([plan])
+}
+
+model User {
+  id               String       @id @default(cuid())
+  email            String       @unique
+  name             String?
+  role             UserRole     @default(OPERATOR)
+  avatar           String?
+
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  sessions         Session[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([email])
+  @@index([organizationId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+// ============================================
+// ENVIRONMENTS (DIGITAL TWINS)
+// ============================================
+
+model Environment {
+  id            String             @id @default(cuid())
+  name          String
+  type          EnvironmentType
+  width         Float              // in meters
+  height        Float              // in meters
+  description   String?
+  layout        Json               // Store layout JSON with obstacles, zones, stations
+  settings      Json?
+
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  robots        Robot[]
+  tasks         Task[]
+  chargingStations ChargingStation[]
+  obstacles     Obstacle[]
+  zones         Zone[]
+  simulations   Simulation[]
+
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@index([organizationId])
+  @@index([type])
+}
+
+model Obstacle {
+  id             String       @id @default(cuid())
+  name           String
+  type           ObstacleType
+  x              Float
+  y              Float
+  width          Float
+  height         Float
+  rotation       Float        @default(0)
+  metadata       Json?
+
+  environmentId  String
+  environment    Environment  @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([environmentId])
+}
+
+model Zone {
+  id             String       @id @default(cuid())
+  name           String
+  type           ZoneType
+  description    String?
+  
+  // Bounds - stored as JSON for flexibility
+  bounds         Json?        // { x, y, width, height } - percentages or pixels
+  
+  // Legacy fields for backward compatibility
+  x              Float?
+  y              Float?
+  width          Float?
+  height         Float?
+  
+  color          String       @default("#6366f1")
+  capacity       Int          @default(10)
+  currentOccupancy Int        @default(0)
+  isActive       Boolean      @default(true)
+  
+  // AI detection metadata
+  aiGenerated    Boolean      @default(false)
+  confidence     Float?
+  
+  metadata       Json?
+
+  environmentId  String?
+  environment    Environment?  @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  objects        ConstructionObject[]
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([environmentId])
+  @@index([type])
+}
+
+// Construction Objects stored in zones
+model ConstructionObject {
+  id             String       @id @default(cuid())
+  name           String
+  type           ObjectType
+  status         ObjectStatus @default(AVAILABLE)
+  
+  // Position
+  x              Float
+  y              Float
+  rotation       Float        @default(0)
+  
+  // Dimensions
+  width          Float
+  height         Float
+  depth          Float        @default(1)
+  
+  weight         Float        @default(10) // kg
+  color          String       @default("#6b7280")
+  
+  // Relationships
+  pickedByRobotId String?
+  targetZoneId   String?
+  
+  zoneId         String?
+  zone           Zone?        @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  
+  metadata       Json?
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([zoneId])
+  @@index([type])
+  @@index([status])
+}
+
+model ChargingStation {
+  id             String       @id @default(cuid())
+  name           String
+  x              Float
+  y              Float
+  capacity       Int          @default(1)
+  chargingPower  Float        @default(7.5) // kW
+  metadata       Json?
+
+  environmentId  String
+  environment    Environment  @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  createdAt      DateTime     @default(now())
+
+  @@index([environmentId])
+}
+
+// ============================================
+// ROBOTS
+// ============================================
+
+model Robot {
+  id             String       @id @default(cuid())
+  name           String
+  type           RobotType
+  status         RobotStatus  @default(IDLE)
+  x              Float        @default(0)
+  y              Float        @default(0)
+  rotation       Float        @default(0)
+  battery        Int          @default(100) // percentage
+  maxBattery     Int          @default(100)
+  capacity       Float        @default(50) // kg
+  speed          Float        @default(1.5) // m/s
+  metadata       Json?
+
+  environmentId  String
+  environment    Environment  @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  currentTaskId  String?
+  currentTask    Task?        @relation(fields: [currentTaskId], references: [id])
+
+  assignments    TaskAssignment[]
+  logs           RobotLog[]
+  metrics        RobotMetric[]
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([environmentId])
+  @@index([status])
+}
+
+// ============================================
+// TASKS
+// ============================================
+
+model Task {
+  id             String       @id @default(cuid())
+  type           TaskType
+  priority       TaskPriority @default(NORMAL)
+  status         TaskStatus   @default(PENDING)
+
+  // Task details
+  startLocation  Json?        // {x, y}
+  endLocation    Json?        // {x, y}
+  items          Json?        // [{itemId, quantity, location}]
+
+  // Estimated & actual metrics
+  estimatedTime  Int?         // seconds
+  actualTime     Int?         // seconds
+  distance       Float?       // meters
+
+  // AI planning
+  aiAssignment   Json?        // AI reasoning for assignment
+  aiScore        Float?       // AI confidence score
+
+  environmentId  String
+  environment    Environment  @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  createdAt      DateTime     @default(now())
+  completedAt    DateTime?
+  updatedAt      DateTime     @updatedAt
+
+  assignments    TaskAssignment[]
+  assignedRobots Robot[]       // Robots with this as currentTask
+
+  @@index([environmentId])
+  @@index([status])
+  @@index([priority])
+}
+
+model TaskAssignment {
+  id             String       @id @default(cuid())
+
+  robotId        String
+  robot          Robot        @relation(fields: [robotId], references: [id], onDelete: Cascade)
+
+  taskId         String
+  task           Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  assignedAt     DateTime     @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  status         TaskStatus   @default(ASSIGNED)
+  metadata       Json?
+
+  @@unique([robotId, taskId])
+  @@index([robotId])
+  @@index([taskId])
+}
+
+// ============================================
+// SIMULATION RUNS
+// ============================================
+
+model Simulation {
+  id             String             @id @default(cuid())
+  name           String
+  status         SimulationStatus   @default(PENDING)
+
+  // Configuration
+  duration       Int                @default(3600) // seconds
+  timeMultiplier Float              @default(1.0) // speed factor
+
+  // Environment snapshot
+  snapshot       Json               // Full environment state
+
+  // Results
+  tasksCompleted Int                @default(0)
+  tasksFailed    Int                @default(0)
+  totalDistance  Float              @default(0)
+  metrics        Json?
+
+  environmentId  String
+  environment    Environment        @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([environmentId])
+  @@index([organizationId])
+  @@index([status])
+}
+
+// ============================================
+// ROBOT LOGS & METRICS
+// ============================================
+
+model RobotLog {
+  id             String       @id @default(cuid())
+  robotId        String
+  robot          Robot        @relation(fields: [robotId], references: [id], onDelete: Cascade)
+
+  type           LogType
+  message        String
+  level          LogLevel     @default(INFO)
+  metadata       Json?
+
+  createdAt      DateTime     @default(now())
+
+  @@index([robotId])
+  @@index([createdAt])
+}
+
+model RobotMetric {
+  id             String       @id @default(cuid())
+  robotId        String
+  robot          Robot        @relation(fields: [robotId], references: [id], onDelete: Cascade)
+
+  // State snapshot
+  status         RobotStatus
+  x              Float
+  y              Float
+  battery        Int
+
+  // Performance
+  tasksCompleted Int          @default(0)
+  distanceTraveled Float      @default(0)
+  uptime         Float        @default(0) // percentage
+
+  timestamp      DateTime     @default(now())
+
+  @@index([robotId])
+  @@index([timestamp])
+}
+
+// ============================================
+// SUBSCRIPTION & BILLING
+// ============================================
+
+model Subscription {
+  id             String             @id @default(cuid())
+  plan           Plan
+  status         SubscriptionStatus @default(ACTIVE)
+
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  startDate      DateTime           @default(now())
+  endDate        DateTime
+  nextBillingDate DateTime
+
+  metadata       Json?
+
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum Plan {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum EnvironmentType {
+  CONSTRUCTION_SITE
+  FACILITY_MAINTENANCE
+  INDUSTRIAL_PLANT
+  BUILDING_PROJECT
+  INFRASTRUCTURE
+  CUSTOM
+}
+
+enum ObstacleType {
+  WALL
+  PILLAR
+  EQUIPMENT
+  SCAFFOLDING
+  TEMPORARY_BARRIER
+  CONSTRUCTION_MATERIALS
+  CUSTOM
+}
+
+enum ZoneType {
+  MATERIAL_STORAGE
+  ASSEMBLY_AREA
+  STAGING_ZONE
+  CHARGING_STATION
+  WORK_ZONE
+  RESTRICTED_AREA
+  INSPECTION_POINT
+  TRANSIT
+}
+
+enum ObjectType {
+  STEEL_BEAM
+  CONCRETE_BLOCK
+  PIPE_SECTION
+  ELECTRICAL_PANEL
+  HVAC_UNIT
+  TOOL_BOX
+  SAFETY_EQUIPMENT
+  SCAFFOLDING_PART
+  CUSTOM
+}
+
+enum ObjectStatus {
+  AVAILABLE
+  PICKED
+  PLACED
+  RESERVED
+  IN_TRANSIT
+}
+
+enum RobotType {
+  MOBILE_MANIPULATOR  // Robot with arm for pick-and-place
+  AMR_TRANSPORT       // Autonomous Mobile Robot - Transport
+  FORKLIFT            // Heavy lifting
+  CRAWLER             // For rough terrain
+  DRONE               // Aerial inspection (future)
+  CUSTOM
+}
+
+enum RobotStatus {
+  IDLE
+  MOVING
+  PICKING
+  CHARGING
+  ERROR
+  MAINTENANCE
+}
+
+enum TaskType {
+  PICK_AND_PLACE       // Pick object and place at location
+  TRANSPORT            // Move materials between zones
+  SORT_MATERIALS       // Organize/sort items
+  ASSEMBLE             // Simple assembly operation
+  INSPECT              // Inspection task
+  CHARGE               // Return to charge
+  PATROL               // Security/monitoring patrol
+  CUSTOM
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum SimulationStatus {
+  PENDING
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+}
+
+enum LogType {
+  STATUS_CHANGE
+  TASK_ASSIGNED
+  TASK_STARTED
+  TASK_COMPLETED
+  ERROR
+  BATTERY_LOW
+  COLLISION
+  CUSTOM
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  TRIAL
+}
