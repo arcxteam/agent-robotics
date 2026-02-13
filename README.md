@@ -2,8 +2,6 @@
   
 # ARC SPATIAL - Autonomous Robotics Control
 
-<img width="1113" height="601" alt="Arcanum-readme" src="https://github.com/user-attachments/assets/7b310a61-e302-4004-acff-57fb4c1eed4e" />
-
 *Launch and Fund Startup – Edition 1 - AI Meets Robotics Hackathon 2026 built by Google Studio - Surge - LabLab.ai - VULTR - Nvidia - Kiro (AWS)*
 
 [Live Dashboard](https://arcspatial.portaltestnet.com) • [Presentation](/presentation) • [Hackathon 2026](https://lablab.ai/ai-hackathons/launch-fund-ai-meets-robotics)
@@ -74,7 +72,7 @@ npm run dev:all
 
 **Option B: Run manually in 2 terminals:**
 
-Terminal 1 - Next.js Frontend:
+Terminal 1 - Next.js Frontend/Backend:
 ```bash
 npm run dev
 # Runs at http://localhost:3000
@@ -179,13 +177,17 @@ The simulation page (`/dashboard/simulation`) contains 5 tabs:
 
 ### Objects (45 total, 17 types)
 
-STEEL_BEAM, CONCRETE_BLOCK, PIPE_SECTION, ELECTRICAL_PANEL, HVAC_UNIT, TOOL_BOX, SAFETY_EQUIPMENT, SCAFFOLDING_PART, CEMENT_BAG, SAND_BAG, CARDBOARD_BOX, BRICK_PALLET, GRAVEL_BAG, TILE_STACK, WOOD_PLANK, REBAR_BUNDLE, MIXED_MATERIAL
+**Example Objects Material:**
+- [x] `STEEL_BEAM`, `CONCRETE_BLOCK`, `PIPE_SECTION`, `ELECTRICAL_PANEL`
+- [x] `TOOL_BOX`, `SCAFFOLDING_PART`, `CEMENT_BAG`, `SAND_BAG`, `HVAC_UNIT`
+- [x] `CARDBOARD_BOX`, `BRICK_PALLET`, `GRAVEL_BAG`, `TILE_STACK`, `WOOD_PLANK`
+- [x] `REBAR_BUNDLE`, `MIXED_MATERIAL`, `SAFETY_EQUIPMENT`
 
 Distribution: 30 in Material Storage, 10 in Staging Zone, 5 in Work Zone A.
 
 ---
 
-## Track 3 Challenge Alignment
+## Track 3 Alignment
 
 **Robotic Interaction and Task Execution (Simulation-First)**
 
@@ -442,18 +444,3 @@ pm2 start npm --name "ws-server" -- run ws:server
 | [GETTING-STARTED.md](./GETTING-STARTED.md) | Setup & troubleshooting |
 
 ---
-
-## Challenge Requirements Met
-
-- **Software-only & simulation-first**: All in browser, no hardware needed
-- **Browser-accessible**: http://localhost:3000 with full web interface
-- **AI integration**: Google Gemini 2.0 Flash for task scheduling, planning, and floor plan analysis
-- **Fleet control**: Multi-robot fleet management with real-time monitoring
-- **Operator dashboards**: Dashboard with metrics, analytics, and control panels
-- **Vultr deployment**: Docker + Nginx configuration for Vultr VM deployment
-- **WebSocket real-time**: Socket.IO for live simulation state updates
-
----
-
-*Version: 1.2.0*
-*Hackathon: lablab.ai "Launch & Fund Your Startup" - AI Meets Robotics (Feb 6-15, 2026)*
