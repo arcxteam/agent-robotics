@@ -1,9 +1,20 @@
+<div align="center">
+  
 # ARC SPATIAL - Autonomous Robotics Control
 
-**Transform Blueprint to Autonomous Execution - Empower your facility to perform autonomous material transport, optimize workflows, and enhance productivity with our intelligent robot fleet management system. From planning to measurable results.**
+<img width="1113" height="601" alt="Arcanum-readme" src="https://github.com/user-attachments/assets/7b310a61-e302-4004-acff-57fb4c1eed4e" />
 
-> lablab.ai "Launch & Fund Your Startup" Challenge - AI Meets Robotics
-> February 6 - 15, 2026
+*Launch and Fund Startup – Edition 1 - AI Meets Robotics Hackathon 2026 built by Google Studio - Surge - LabLab.ai - VULTR - Nvidia - Kiro (AWS)*
+
+[Live Dashboard](https://arcspatial.portaltestnet.com) • [Presentation](/presentation) • [Hackathon 2026](https://lablab.ai/ai-hackathons/launch-fund-ai-meets-robotics)
+
+</div>
+
+---
+
+## Overview
+
+Transform Blueprint to Autonomous Execution - Empower your facility to perform autonomous material transport, optimize workflows, and enhance productivity with our intelligent robot fleet management system. From planning to measurable results.
 
 ---
 
@@ -22,17 +33,29 @@ Edit `.env` with your API keys:
 ```env
 # REQUIRED - Google Gemini for AI Scheduling & Task Planning
 GEMINI_API_KEY="your-gemini-api-key-here"
-
-# OPTIONAL - z.ai LLM (backup AI provider)
-ZAI_API_KEY="your-zai-api-key-here"
+GOOGLE_AI_API_KEY="your-gemini-api-key-here"
 
 # Database (default: file-based SQLite for development)
 DATABASE_URL="file:./db/arcspatial.db"
+# PostgreSQL (production):
+DATABASE_URL="postgres://user:password@host:5432/xxxxxx?sslmode=require"
+
+# ROS 2 Bridge (optional - for Gazebo/Isaac Sim integration)
+ROS_BRIDGE_URL="ws://localhost:9090"
+GAZEBO_URL="http://localhost:11345"
+
+NODE_ENV="development"
+NEXT_PUBLIC_APP_NAME="ARC SPATIAL"
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
+
+# Dev: http://localhost:3003
+# Pro: https://your-domain.com
+NEXT_PUBLIC_WS_URL="http://localhost:3003"
+NEXT_PUBLIC_WS_PORT="3003"
 ```
 
 **How to get API Keys:**
 - **Gemini**: https://aistudio.google.com/apikey
-- **z.ai**: https://api.z.ai (optional)
 
 ### 2. Install Dependencies
 
