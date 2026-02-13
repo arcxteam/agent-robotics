@@ -280,12 +280,12 @@ async function analyzeWithGemini(
         ],
         config: {
           temperature: 0.3,
-          maxOutputTokens: 4096,
+          maxOutputTokens: 8192,
         }
       });
 
       const text = response.text || '';
-      
+
       // Parse JSON from response
       let jsonStr = text;
       if (text.includes('```json')) {
@@ -293,9 +293,25 @@ async function analyzeWithGemini(
       } else if (text.includes('```')) {
         jsonStr = text.split('```')[1].split('```')[0].trim();
       }
-      
-      const analysis = JSON.parse(jsonStr);
-      return { success: true, result: analysis };
+
+      // Try direct parse first, then attempt repair for truncated JSON
+      try {
+        const analysis = JSON.parse(jsonStr);
+        return { success: true, result: analysis };
+      } catch {
+        let repaired = jsonStr;
+        repaired = repaired.replace(/,\s*"[^"]*$/, '');
+        repaired = repaired.replace(/,\s*$/, '');
+        const openBraces = (repaired.match(/{/g) || []).length;
+        const closeBraces = (repaired.match(/}/g) || []).length;
+        const openBrackets = (repaired.match(/\[/g) || []).length;
+        const closeBrackets = (repaired.match(/]/g) || []).length;
+        for (let b = 0; b < openBrackets - closeBrackets; b++) repaired += ']';
+        for (let b = 0; b < openBraces - closeBraces; b++) repaired += '}';
+        const analysis = JSON.parse(repaired);
+        console.log(`[Map Analysis] Gemini JSON repaired successfully (key ${i + 1})`);
+        return { success: true, result: analysis };
+      }
       
     } catch (error: any) {
       const errorMsg = error?.message || String(error);
@@ -346,14 +362,14 @@ Respond ONLY with valid JSON.`;
           model: ZAI_MODEL,
           messages: [{ role: 'user', content: textPrompt }],
           temperature: 0.3,
-          max_tokens: 4096
+          max_tokens: 8192
         })
       });
 
       if (response.ok) {
         const data = await response.json();
         const text = data.choices?.[0]?.message?.content || '';
-        
+
         // Parse JSON from response
         let jsonStr = text;
         if (text.includes('```json')) {
@@ -361,9 +377,28 @@ Respond ONLY with valid JSON.`;
         } else if (text.includes('```')) {
           jsonStr = text.split('```')[1].split('```')[0].trim();
         }
-        
-        const analysis = JSON.parse(jsonStr);
-        return { success: true, result: analysis };
+
+        // Try to repair truncated JSON by closing unclosed brackets
+        try {
+          const analysis = JSON.parse(jsonStr);
+          return { success: true, result: analysis };
+        } catch {
+          // Attempt repair: remove trailing incomplete values and close brackets
+          let repaired = jsonStr;
+          // Remove trailing incomplete string/value after last complete entry
+          repaired = repaired.replace(/,\s*"[^"]*$/, '');
+          repaired = repaired.replace(/,\s*$/, '');
+          // Count unclosed brackets and close them
+          const openBraces = (repaired.match(/{/g) || []).length;
+          const closeBraces = (repaired.match(/}/g) || []).length;
+          const openBrackets = (repaired.match(/\[/g) || []).length;
+          const closeBrackets = (repaired.match(/]/g) || []).length;
+          for (let b = 0; b < openBrackets - closeBrackets; b++) repaired += ']';
+          for (let b = 0; b < openBraces - closeBraces; b++) repaired += '}';
+          const analysis = JSON.parse(repaired);
+          console.log('[Map Analysis] Z-AI JSON repaired successfully');
+          return { success: true, result: analysis };
+        }
       }
     } catch (zaiError) {
       console.error('[Map Analysis] Z-AI fallback failed:', zaiError);

@@ -1058,21 +1058,28 @@ function assignTaskToRobot(task: Task, robot: Robot, state: SimulationState): vo
 }
 
 function findBestRobotForTask(task: Task, state: SimulationState): Robot | null {
+  const needsGripper = task.type === 'PICK_AND_PLACE' || task.type === 'SORT_MATERIALS' || task.type === 'ASSEMBLE';
+
   const availableRobots = Array.from(state.robots.values())
-    .filter(r => r.status === 'IDLE' && r.battery > 30 && r.currentTaskId === null);
-  
+    .filter(r =>
+      r.status === 'IDLE' &&
+      r.battery > 30 &&
+      r.currentTaskId === null &&
+      (!needsGripper || r.gripper !== null) // Only robots with gripper for pick tasks
+    );
+
   if (availableRobots.length === 0) return null;
-  
+
   // Find robot closest to the task's first target
   const firstTarget = task.steps[0]?.target;
   if (!firstTarget) return availableRobots[0];
-  
-  const targetPos = typeof firstTarget === 'string' 
+
+  const targetPos = typeof firstTarget === 'string'
     ? getObjectPosition(firstTarget, state)
     : firstTarget;
-  
+
   if (!targetPos) return availableRobots[0];
-  
+
   return availableRobots.reduce((best, robot) => {
     const distBest = distance(best.pose, targetPos);
     const distCurrent = distance(robot.pose, targetPos);
@@ -1512,6 +1519,76 @@ const httpServer = createServer((req, res) => {
     return;
   }
 
+  // Full simulation status API — real-time state for monitoring & integration
+  if (req.url === '/api/status') {
+    const robots = Array.from(simulationState.robots.values());
+    const tasks = Array.from(simulationState.tasks.values());
+    const objects = Array.from(simulationState.objects.values());
+    const zones = Array.from(simulationState.zones.values());
+
+    const uptime = simulationState.startTime > 0
+      ? Math.floor((Date.now() - simulationState.startTime) / 1000)
+      : 0;
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Credentials': 'true'
+    });
+    res.end(JSON.stringify({
+      status: 'ok',
+      service: 'ArcSpatial Simulation Server',
+      timestamp: new Date().toISOString(),
+      connections: io?.engine?.clientsCount || 0,
+      simulation: {
+        id: simulationState.id,
+        name: simulationState.name,
+        state: simulationState.status,
+        environment: simulationState.environmentType,
+        tick: simulationState.tick,
+        speed: simulationState.timeMultiplier,
+        uptime,
+        dimensions: simulationState.dimensions,
+      },
+      fleet: {
+        total: robots.length,
+        active: robots.filter(r => r.status !== 'IDLE' && r.status !== 'CHARGING').length,
+        idle: robots.filter(r => r.status === 'IDLE').length,
+        charging: robots.filter(r => r.status === 'CHARGING').length,
+        robots: robots.map(r => ({
+          id: r.id,
+          name: r.name,
+          type: r.type,
+          status: r.status,
+          battery: Math.round(r.battery ?? 0),
+          position: { x: Math.round(r.pose.x), y: Math.round(r.pose.y) },
+          currentTask: r.currentTaskId || null,
+          distanceTraveled: Math.round(r.distanceTraveled ?? 0),
+        })),
+      },
+      tasks: {
+        pending: tasks.filter(t => t.status === 'PENDING').length,
+        inProgress: tasks.filter(t => t.status === 'IN_PROGRESS').length,
+        completed: tasks.filter(t => t.status === 'COMPLETED').length,
+        failed: tasks.filter(t => t.status === 'FAILED').length,
+        total: tasks.length,
+      },
+      objects: {
+        total: objects.length,
+        available: objects.filter(o => o.status === 'AVAILABLE').length,
+        picked: objects.filter(o => o.status === 'PICKED').length,
+        placed: objects.filter(o => o.status === 'PLACED').length,
+        types: [...new Set(objects.map(o => o.type))],
+      },
+      zones: {
+        total: zones.length,
+        list: zones.map(z => ({ id: z.id, name: z.name, type: z.type })),
+      },
+      metrics: simulationState.metrics,
+    }));
+    return;
+  }
+
   res.writeHead(404);
   res.end('Not Found');
 });
@@ -1782,25 +1859,63 @@ io.on('connection', (socket: Socket) => {
   // Handle AI auto-scheduling
   socket.on('ai:schedule', async () => {
     // Find all pending tasks and available robots
-    const pendingTasks = Array.from(simulationState.tasks.values())
+    let pendingTasks = Array.from(simulationState.tasks.values())
       .filter(t => t.status === 'PENDING');
-    
+
     const availableRobots = Array.from(simulationState.robots.values())
-      .filter(r => r.status === 'IDLE' && r.battery > 30);
-    
-    // Simple AI scheduling: assign closest robot
+      .filter(r => r.status === 'IDLE' && r.battery > 30 && r.currentTaskId === null);
+
+    // If no pending tasks exist, auto-create pick-and-place tasks for available objects
+    if (pendingTasks.length === 0 && availableRobots.length > 0) {
+      const availableObjects = Array.from(simulationState.objects.values())
+        .filter(o => o.status === 'AVAILABLE');
+      const targetZones = Array.from(simulationState.zones.values())
+        .filter(z => z.type === 'ASSEMBLY_AREA' || z.type === 'STAGING_ZONE' || z.type === 'WORK_ZONE');
+
+      if (availableObjects.length > 0 && targetZones.length > 0) {
+        const tasksToCreate = Math.min(availableObjects.length, availableRobots.length);
+        const createdTasks: Task[] = [];
+
+        for (let i = 0; i < tasksToCreate; i++) {
+          const obj = availableObjects[i];
+          // Pick a target zone different from where the object currently is
+          let targetZone = targetZones[i % targetZones.length];
+          // Avoid placing in same zone — find a different one
+          for (const z of targetZones) {
+            if (!isInsideBounds(obj.pose, z.bounds)) {
+              targetZone = z;
+              break;
+            }
+          }
+          try {
+            const task = createPickAndPlaceTask(obj.id, targetZone.id, simulationState);
+            task.aiScore = 0.9;
+            task.aiReasoning = `AI auto-created: Move ${obj.name} → ${targetZone.name}`;
+            createdTasks.push(task);
+          } catch {
+            continue;
+          }
+        }
+
+        pendingTasks = createdTasks;
+        console.log(`🤖 AI auto-created ${createdTasks.length} tasks`);
+      }
+    }
+
+    // Assign pending tasks to best available robots
+    let tasksAssigned = 0;
     for (const task of pendingTasks) {
       const robot = findBestRobotForTask(task, simulationState);
       if (robot) {
-        task.aiScore = 0.85;
-        task.aiReasoning = `Assigned to ${robot.name}: Battery ${robot.battery}%, Distance optimal`;
+        task.aiScore = task.aiScore || 0.85;
+        task.aiReasoning = task.aiReasoning || `Assigned to ${robot.name}: Battery ${Math.round(robot.battery)}%, Distance optimal`;
         assignTaskToRobot(task, robot, simulationState);
+        tasksAssigned++;
       }
     }
-    
-    io.emit('ai:scheduled', { 
-      tasksAssigned: pendingTasks.filter(t => t.status === 'IN_PROGRESS').length 
-    });
+
+    io.emit('ai:scheduled', { tasksAssigned });
+    console.log(`🤖 AI scheduled: ${tasksAssigned} tasks assigned`);
   });
   
   // Handle creating new objects

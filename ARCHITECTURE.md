@@ -43,6 +43,7 @@
 |                (Nginx Reverse Proxy)                               |
 |   - SSL termination (HTTPS)                                       |
 |   - /socket.io/ proxy to port 3003                                |
+|   - /ws-health proxy to port 3003 /api/status                     |
 |   - /api proxy to port 3000                                       |
 |   - Gzip compression                                              |
 |   - Security headers (X-Frame-Options, CSP, etc.)                 |
@@ -151,7 +152,7 @@
         | simulation:start/pause/stop/reset     |
         +-------------------------------------->|
         |                                       |
-        | simulation:speed (0.1x - 5x)          |
+        | simulation:speed (0.1x - 10x)         |
         +-------------------------------------->|
         |                                       |
         | task:create (objectId, targetZoneId)   |
@@ -187,7 +188,7 @@
 | `simulation:pause` | — | Pause simulation |
 | `simulation:stop` | — | Stop and reset simulation |
 | `simulation:reset` | — | Reset to initial state |
-| `simulation:speed` | `{ speed: number }` | Set time multiplier (0.1 - 5.0) |
+| `simulation:speed` | `{ speed: number }` | Set time multiplier (0.1 - 10.0) |
 | `task:create` | `{ objectId, targetZoneId, robotId? }` | Create a pick-and-place task |
 | `task:create-bulk` | `{ objectIds[], targetZoneId }` | Create multiple tasks at once |
 | `task:cancel` | `{ taskId }` | Cancel a pending/active task |
@@ -195,7 +196,7 @@
 | `task:assemble` | `{ componentIds[], targetZoneId }` | Assemble components |
 | `robot:move` | `{ robotId, x, y }` | Manual robot movement |
 | `robot:stop` | `{ robotId }` | Stop robot movement |
-| `ai:schedule` | — | AI auto-assign all pending tasks |
+| `ai:schedule` | — | AI auto-create & assign tasks to idle robots |
 | `object:create` | `{ type, zoneId }` | Spawn a new object |
 
 ### Server-to-Client Events
@@ -209,6 +210,46 @@
 | `task:created` | Task object | A task was successfully created |
 | `task:failed` | `{ error }` | Task creation failed |
 | `task:cancelled` | `{ taskId }` | Task was cancelled |
+
+### Simulation REST API (Port 3003)
+
+The WebSocket server also exposes REST endpoints for monitoring, health checks, and external integration:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Basic health check: `{"status":"ok","connections":N}` |
+| `GET /api/status` | Full simulation state (fleet, tasks, objects, zones, metrics) |
+
+**Production Access (via nginx proxy):**
+
+| Production URL | Description |
+|----------------|-------------|
+| `/api/ws-status` | Full status via Next.js API proxy |
+| `/ws-health` | Full status via nginx direct proxy |
+| `/socket.io/?EIO=4&transport=polling` | Socket.IO handshake |
+| `/dashboard/simulation` | Real-time simulation UI |
+
+**Example Response** (`GET /api/status` or `/api/ws-status`):
+
+```json
+{
+  "status": "ok",
+  "service": "ArcSpatial Simulation Server",
+  "timestamp": "2026-02-13T16:19:36Z",
+  "connections": 3,
+  "simulation": { "name": "Construction Site Alpha", "state": "RUNNING", "tick": 1542, "uptime": 385 },
+  "fleet": {
+    "total": 4, "active": 3, "idle": 0, "charging": 1,
+    "robots": [
+      { "name": "Mobile Manipulator 01", "status": "CARRYING", "battery": 72, "position": { "x": 450, "y": 320 } }
+    ]
+  },
+  "tasks": { "pending": 2, "inProgress": 3, "completed": 18, "failed": 1, "total": 24 },
+  "objects": { "total": 45, "available": 22, "beingCarried": 3, "delivered": 20 },
+  "zones": { "total": 6 },
+  "metrics": { "totalTasksCompleted": 18, "averageTaskTime": 12.4, "fleetEfficiency": 0.85, "pickSuccessRate": 0.95 }
+}
+```
 
 ### Task Execution Flow (Pick and Place)
 
@@ -313,6 +354,7 @@ Battery < 20%:
 │   │   │   │   ├── analyze-map/route.ts  # AI floor plan analysis & zone detection
 │   │   │   │   ├── plan-task/route.ts    # AI task planning (natural language)
 │   │   │   │   └── schedule/route.ts     # AI auto-scheduling
+│   │   │   ├── ws-status/route.ts       # WebSocket simulation status API
 │   │   │   ├── settings/
 │   │   │   │   ├── api-keys/route.ts     # API key management
 │   │   │   │   ├── database/route.ts     # Database config
@@ -384,7 +426,7 @@ The main simulation page (`/dashboard/simulation`) has 5 tabs:
 ### Tab 1: 3D Robot Arm
 - **Technology**: React Three Fiber + Rapier physics
 - **Features**: 3D pick-and-place with 4 robot types (Box Truck, Forklift, AMR)
-- **Modes**: Manual task assignment or Auto Mode
+- **Modes**: Manual task assignment or Auto Mode (auto-create & deliver every 800ms)
 - **Controls**: Start/Pause/Reset/Auto + inline task creation + add material (all in top bar)
 - **Floor Plan**: Upload a floor plan image to display as ground texture
 - **Activity Feed**: Live auto-mode status showing robot actions in real-time
@@ -392,32 +434,36 @@ The main simulation page (`/dashboard/simulation`) has 5 tabs:
 
 ### Tab 2: Floor Plan
 - **Technology**: Canvas 2D + Google Gemini AI
-- **Features**: Upload PDF or image floor plan
-- **AI Detection**: Gemini analyzes the image to detect zones (Meeting Room, Office, etc.)
-- **Manual Editing**: Drag and resize zones manually
+- **Features**: Upload PDF or image floor plan (PNG, JPG, SVG, DXF, DWG — up to 50MB)
+- **AI Detection**: Gemini Vision analyzes the image to detect zones (Meeting Room, Office, Kitchen, etc.)
+- **Manual Editing**: Drag and resize zones manually on the canvas
 
 ### Tab 3: Fleet Simulation
 - **Technology**: Canvas 2D + Socket.IO WebSocket
 - **Features**: Real-time 2D robot fleet simulation with LiDAR visualization
-- **Layout**: Vertical stacking — controls at top, canvas in middle, metrics + live fleet activity + active tasks below
+- **Speed**: 0.1x — 10x time multiplier for fast-forward
+- **AI Auto-Schedule**: One-click auto task creation & robot assignment (finds available objects, creates pick-and-place tasks, assigns robots with grippers)
+- **Bulk Task Mode**: Select multiple objects and create tasks in batch
+- **View Toggles**: Zones, Paths, LiDAR, Robot Labels — each with on/off visual indicator
 - **Pathfinding**: A* algorithm with obstacle avoidance
 - **Connection**: WebSocket to simulation server (port 3003)
 - **Controls**: Start/Pause/Stop/Reset + compact task creation + add material (above canvas)
 - **Live Fleet Activity**: Real-time status display below canvas showing all robots and their current actions
-- **Active Tasks Panel**: Real-time task progress tracking below fleet activity
+- **Active Tasks Panel**: Real-time task progress tracking with step counter
 - **Zone Sync**: Receives AI-detected zones from Setup & Zones tab, syncs to WebSocket server
 
 ### Tab 4: Setup & Zones
-- **Technology**: Canvas 2D
-- **Features**: Upload environment map, draw zones manually
-- **AI Detect**: Auto-detect zones from uploaded images using Gemini Vision
-- **Sync**: Zones sync to all other tabs (3D Robot Arm + Fleet Simulation)
+- **Technology**: Canvas 2D + Google Gemini Vision
+- **Upload**: Drag & drop floor plans (PDF, PNG, JPG, SVG, DXF, DWG — max 50MB)
+- **AI Detect**: Auto-detect zones from uploaded images using Gemini Vision — identifies rooms, areas, and suggests zone types
+- **Zone Drawing Tool**: Manually draw zone rectangles, set type/name/color/capacity, select/resize/edit existing zones
+- **Zone Sync**: All zones sync to 3D Robot Arm and Fleet Simulation tabs — robots navigate using these zones
 
 ### Tab 5: AI Planner
 - **Technology**: Google Gemini 2.0 Flash
 - **Features**: Natural language task planning
 - **Usage**: Type commands like "Move all steel beams to assembly area"
-- **Output**: Generates task plan and sends to simulation
+- **Output**: Generates task plan with robot assignments and sends to simulation
 
 ---
 
@@ -509,7 +555,8 @@ The Dockerfile uses multi-stage build:
 The `example.nginx.conf` provides a production Nginx configuration:
 - HTTP to HTTPS redirect
 - SSL termination
-- `/socket.io/` proxy to port 3003 (WebSocket)
+- `/socket.io/` proxy to port 3003 (WebSocket with dynamic upgrade)
+- `/ws-health` proxy to port 3003 `/api/status` (simulation status endpoint)
 - `/api` proxy with disabled buffering (SSE support)
 - Static asset caching (`/_next/static` cached for 1 year)
 - Gzip compression
@@ -532,8 +579,11 @@ pm2 start npm --name "ws-server" -- run ws:server
   output: "standalone",        // Optimized for Docker/containerization
   reactStrictMode: false,
 
-  // Proxy WebSocket connections to simulation server
+  // Proxy WebSocket connections to simulation server (development only)
+  // In production, nginx handles /socket.io/ proxy — Next.js standalone
+  // does not properly forward query params for external URL rewrites
   async rewrites() {
+    if (process.env.NODE_ENV === 'production') return [];
     return [
       { source: '/socket.io',       destination: 'http://localhost:3003/socket.io' },
       { source: '/socket.io/:path*', destination: 'http://localhost:3003/socket.io/:path*' },
@@ -552,7 +602,7 @@ The client-side WebSocket URL is resolved dynamically (`src/lib/websocket-url.ts
 |-------------|-----|
 | `NEXT_PUBLIC_WS_URL` set | Uses the env variable directly |
 | GitHub Codespaces | `https://{codespace}-3003.app.github.dev` |
-| Production (Nginx) | `https://{hostname}/ws` |
+| Production (Nginx) | `https://{hostname}` (nginx proxies `/socket.io/` to port 3003) |
 | Local development | `http://localhost:3003` |
 
 ---
@@ -599,5 +649,5 @@ The client-side WebSocket URL is resolved dynamically (`src/lib/websocket-url.ts
 
 ---
 
-**Architecture Version: 3.1**
+**Architecture Version: 3.2**
 **Hackathon: lablab.ai "Launch & Fund Your Startup" - AI Meets Robotics (Feb 6-15, 2026)**

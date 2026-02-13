@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
@@ -14,9 +14,6 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
-  Bot,
-  MapPin,
-  Battery,
   Activity,
   Radar,
   Navigation,
@@ -26,6 +23,7 @@ import {
   AlertTriangle,
   Layers,
   Tag,
+  Sparkles,
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import { getWebSocketUrl } from '@/lib/websocket-url';
@@ -102,15 +100,15 @@ type ObjectType =
   | 'SAFETY_EQUIPMENT'
   | 'SCAFFOLDING_PART'
   // Construction materials (lightweight)
-  | 'CEMENT_BAG'        // Karung semen
-  | 'SAND_BAG'          // Karung pasir
-  | 'CARDBOARD_BOX'     // Kardus material
-  | 'BRICK_PALLET'      // Palet bata
-  | 'GRAVEL_BAG'        // Karung kerikil
-  | 'TILE_STACK'        // Tumpukan keramik
-  | 'WOOD_PLANK'        // Papan kayu
-  | 'REBAR_BUNDLE'      // Bundel besi beton
-  | 'MIXED_MATERIAL';   // Material campur
+  | 'CEMENT_BAG'        
+  | 'SAND_BAG'          
+  | 'CARDBOARD_BOX'     
+  | 'BRICK_PALLET'      
+  | 'GRAVEL_BAG'        
+  | 'TILE_STACK'        
+  | 'WOOD_PLANK'        
+  | 'REBAR_BUNDLE'      
+  | 'MIXED_MATERIAL';  
 
 type ObjectStatus = 'AVAILABLE' | 'PICKED' | 'PLACED' | 'RESERVED';
 
@@ -446,12 +444,6 @@ function drawObjectShape(
   }
 }
 
-const ROBOT_ICONS: Record<string, string> = {
-  MOBILE_MANIPULATOR: '🤖',
-  AMR_TRANSPORT: '🚚',
-  FORKLIFT: '🏗️'
-};
-
 // ============================================
 // MAIN COMPONENT
 // ============================================
@@ -476,6 +468,7 @@ interface SimulationCanvasProps {
 
 export default function ConstructionSimulation({ width = 1000, height = 800, backgroundMap, externalZones }: SimulationCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
   const backgroundImageRef = useRef<HTMLImageElement | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -488,12 +481,11 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
   const [showLidar, setShowLidar] = useState(false);
   const [showPaths, setShowPaths] = useState(true);
   const [showZones, setShowZones] = useState(true);
-  const [showBackground, setShowBackground] = useState(true);
+  const [showBackground] = useState(true);
+  const [localSpeed, setLocalSpeed] = useState(1);
   const [showRobotLabels, setShowRobotLabels] = useState(true);
-  const [showObjectLabels, setShowObjectLabels] = useState(false);
   const [selectedRobot, setSelectedRobot] = useState<string | null>(null);
-  const [selectedObject, setSelectedObject] = useState<string | null>(null);;
-  const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [selectedObject, setSelectedObject] = useState<string | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
   
@@ -585,7 +577,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
       console.log('✅ Connected to simulation server');
     });
 
-    socketInstance.on('connect_error', (error) => {
+    socketInstance.on('connect_error', () => {
       // Only log warning, not error (to avoid console spam)
       console.warn('⚠️ Simulation server not running. Start with: npm run sim:server');
       setIsConnected(false);
@@ -1035,11 +1027,20 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
     setIsPanning(false);
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
+  const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    setZoom(prev => Math.max(0.5, Math.min(3, prev + delta)));
-  };
+    setZoom(prev => Math.max(0.3, Math.min(3, prev + delta)));
+  }, []);
+
+  // Attach wheel listener as non-passive so preventDefault works
+  useEffect(() => {
+    const container = canvasContainerRef.current;
+    if (!container) return;
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
+  }, [handleWheel]);
 
   // ============================================
   // SIMULATION CONTROLS
@@ -1090,7 +1091,9 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
   };
 
   const handleSpeedChange = (value: number[]) => {
-    socket?.emit('simulation:speed', { multiplier: value[0] });
+    const speed = Math.round(value[0] * 10) / 10;
+    setLocalSpeed(speed);
+    socket?.emit('simulation:speed', { multiplier: speed });
   };
 
   const handleAddMaterial = () => {
@@ -1103,9 +1106,6 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
     }
   };
 
-  // Get selected robot/object data
-  const selectedRobotData = state?.robots.find(r => r.id === selectedRobot);
-  const selectedObjectData = state?.objects.find(o => o.id === selectedObject);
   const availableObjects = state?.objects.filter(o => o.status === 'AVAILABLE') || [];
   // Use externalZones if available and sync not yet confirmed, otherwise server state
   const activeZones = (externalZones && externalZones.length > 0 && !zonesSyncedRef.current)
@@ -1114,9 +1114,9 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
   const targetZones = activeZones.filter(z => z.type !== 'CHARGING_STATION' && z.type !== 'ROBOT_HOME');
 
   return (
-    <div className="flex flex-col gap-3 h-full">
+    <div className="flex flex-col gap-3 h-full overflow-y-auto">
       {/* Main Canvas Area — full width vertical layout */}
-      <div className="flex-1 flex flex-col gap-3">
+      <div className="flex-1 flex flex-col gap-3 min-h-0">
         {/* Top Controls */}
         <Card className="bg-slate-900/50 border-slate-800">
           <CardContent className="py-3">
@@ -1127,7 +1127,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                   size="sm"
                   onClick={handleStart}
                   disabled={!isConnected || state?.status === 'RUNNING'}
-                  className="bg-green-600 hover:bg-green-700"
+                  className="bg-green-600 hover:bg-green-700 active:bg-green-800 active:scale-95 transition-all"
                 >
                   <Play className="w-4 h-4 mr-1" /> Start
                 </Button>
@@ -1135,7 +1135,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                   size="sm"
                   onClick={handlePause}
                   disabled={!isConnected || state?.status !== 'RUNNING'}
-                  className="bg-yellow-600 hover:bg-yellow-700"
+                  className="bg-yellow-600 hover:bg-yellow-700 active:bg-yellow-800 active:scale-95 transition-all"
                 >
                   <Pause className="w-4 h-4 mr-1" /> Pause
                 </Button>
@@ -1144,6 +1144,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                   onClick={handleStop}
                   disabled={!isConnected || state?.status === 'STOPPED'}
                   variant="destructive"
+                  className="active:scale-95 transition-all"
                 >
                   <Square className="w-4 h-4 mr-1" /> Stop
                 </Button>
@@ -1152,6 +1153,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                   onClick={handleReset}
                   disabled={!isConnected}
                   variant="outline"
+                  className="active:scale-95 transition-all"
                 >
                   <RotateCcw className="w-4 h-4 mr-1" /> Reset
                 </Button>
@@ -1163,12 +1165,12 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                 <Slider
                   defaultValue={[1]}
                   min={0.1}
-                  max={5}
+                  max={10}
                   step={0.1}
-                  className="w-32"
+                  className="w-32 [&_[data-slot=slider-track]]:bg-slate-700 [&_[data-slot=slider-range]]:bg-cyan-500 [&_[data-slot=slider-thumb]]:border-cyan-500 [&_[data-slot=slider-thumb]]:bg-slate-900"
                   onValueChange={handleSpeedChange}
                 />
-                <span className="text-sm text-white w-12">{state?.timeMultiplier || 1}x</span>
+                <span className="text-sm text-white w-12">{localSpeed}x</span>
               </div>
 
               {/* View Controls */}
@@ -1177,6 +1179,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                   size="sm"
                   variant={showZones ? 'default' : 'outline'}
                   onClick={() => setShowZones(!showZones)}
+                  className={`active:scale-95 transition-all ${showZones ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
                 >
                   <Layers className="w-4 h-4" />
                 </Button>
@@ -1184,6 +1187,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                   size="sm"
                   variant={showPaths ? 'default' : 'outline'}
                   onClick={() => setShowPaths(!showPaths)}
+                  className={`active:scale-95 transition-all ${showPaths ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
                 >
                   <Navigation className="w-4 h-4" />
                 </Button>
@@ -1192,6 +1196,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                   variant={showLidar ? 'default' : 'outline'}
                   onClick={() => setShowLidar(!showLidar)}
                   title="Toggle LiDAR"
+                  className={`active:scale-95 transition-all ${showLidar ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
                 >
                   <Radar className="w-4 h-4" />
                 </Button>
@@ -1200,6 +1205,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                   variant={showRobotLabels ? 'default' : 'outline'}
                   onClick={() => setShowRobotLabels(!showRobotLabels)}
                   title="Toggle Robot Labels"
+                  className={`active:scale-95 transition-all ${showRobotLabels ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
                 >
                   <Tag className="w-4 h-4" />
                 </Button>
@@ -1208,6 +1214,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                     size="sm"
                     variant="outline"
                     onClick={() => setZoom(prev => Math.min(3, prev + 0.2))}
+                    className="active:scale-95 active:bg-slate-700 transition-all"
                   >
                     <ZoomIn className="w-4 h-4" />
                   </Button>
@@ -1216,6 +1223,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                     size="sm"
                     variant="outline"
                     onClick={() => setZoom(prev => Math.max(0.5, prev - 0.2))}
+                    className="active:scale-95 active:bg-slate-700 transition-all"
                   >
                     <ZoomOut className="w-4 h-4" />
                   </Button>
@@ -1233,6 +1241,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                       }
                     }}
                     title="Toggle Fullscreen"
+                    className="active:scale-95 active:bg-slate-700 transition-all"
                   >
                     <Maximize2 className="w-4 h-4" />
                   </Button>
@@ -1320,7 +1329,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                 </Select>
                 <Button
                   size="sm"
-                  className="bg-gradient-to-r from-purple-600 to-pink-600"
+                  className="bg-gradient-to-r from-purple-600 to-pink-600 active:from-purple-700 active:to-pink-700 active:scale-95 transition-all"
                   onClick={handleCreateTask}
                   disabled={bulkMode ? (selectedBulkObjects.length === 0 || !taskTargetZone) : (!taskObjectId || !taskTargetZone)}
                 >
@@ -1333,8 +1342,9 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                   onClick={handleAISchedule}
                   disabled={!isConnected}
                   title="AI Auto-Schedule"
+                  className="active:scale-95 active:bg-yellow-600 active:text-white transition-all hover:bg-yellow-600/20 hover:border-yellow-500"
                 >
-                  <Zap className="w-4 h-4" />
+                  <Sparkles className="w-4 h-4" />
                 </Button>
               </div>
             </CardContent>
@@ -1375,7 +1385,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
                 </Select>
                 <Button
                   size="sm"
-                  className="bg-emerald-600 hover:bg-emerald-700"
+                  className="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 active:scale-95 transition-all"
                   onClick={handleAddMaterial}
                   disabled={!isConnected || !addMaterialType || !addMaterialZone}
                 >
@@ -1387,7 +1397,7 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
         </div>
 
         {/* Canvas */}
-        <Card data-simulation-canvas className="flex-1 bg-slate-900/50 border-slate-800 overflow-hidden relative min-h-[500px]">
+        <Card ref={canvasContainerRef} data-simulation-canvas className="flex-1 bg-slate-900/50 border-slate-800 overflow-hidden relative min-h-[500px]">
           {/* Server Not Running Alert */}
           {!isConnected && (
             <div className="absolute inset-0 z-10 bg-slate-900/90 flex items-center justify-center">
@@ -1424,151 +1434,150 @@ export default function ConstructionSimulation({ width = 1000, height = 800, bac
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            onWheel={handleWheel}
           />
         </Card>
 
-        {/* Metrics Bar */}
+        {/* Bottom Panel — metrics + fleet activity + tasks in a compact scrollable area */}
         {state && (
-          <Card className="bg-slate-900/50 border-slate-800">
-            <CardContent className="py-3">
-              <div className="grid grid-cols-6 gap-4">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-white">{state.robots.length}</div>
-                  <div className="text-xs text-slate-400">Robots</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-green-400">{state.metrics.totalTasksCompleted}</div>
-                  <div className="text-xs text-slate-400">Tasks Completed</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-yellow-400">
-                    {state.tasks.filter(t => t.status === 'IN_PROGRESS').length}
+          <div className="flex-shrink-0 space-y-3">
+            {/* Metrics Bar */}
+            <Card className="bg-slate-900/50 border-slate-800">
+              <CardContent className="py-2">
+                <div className="grid grid-cols-6 gap-4">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-white">{state.robots.length}</div>
+                    <div className="text-xs text-slate-400">Robots</div>
                   </div>
-                  <div className="text-xs text-slate-400">In Progress</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-400">
-                    {state.tasks.filter(t => t.status === 'PENDING').length}
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-green-400">{state.metrics.totalTasksCompleted}</div>
+                    <div className="text-xs text-slate-400">Completed</div>
                   </div>
-                  <div className="text-xs text-slate-400">Pending</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-cyan-400">
-                    {Math.round(state.metrics.fleetEfficiency * 100)}%
-                  </div>
-                  <div className="text-xs text-slate-400">Fleet Efficiency</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-purple-400">
-                    {state.metrics.averageTaskTime.toFixed(1)}s
-                  </div>
-                  <div className="text-xs text-slate-400">Avg Task Time</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Live Fleet Activity — below map, like 3D arm robot style */}
-        {state && (
-          <Card className="bg-slate-900/50 border-slate-800">
-            <CardContent className="py-2 px-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Zap className="w-4 h-4 text-orange-400 animate-pulse" />
-                <span className="text-sm font-medium text-white">Live Fleet Activity</span>
-                <Badge variant="outline" className="text-green-400 border-green-500/50 text-xs ml-auto">
-                  {state.robots.filter(r => r.status !== 'IDLE').length}/{state.robots.length} active
-                </Badge>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
-                {state.robots.map(robot => {
-                  const task = state.tasks.find(t => t.assignedRobotId === robot.id && t.status === 'IN_PROGRESS');
-                  const targetObj = task?.objectId ? state.objects.find(o => o.id === task.objectId) : null;
-                  const targetZoneData = task?.targetZone ? activeZones.find(z => z.id === task.targetZone) : null;
-                  return (
-                    <div
-                      key={robot.id}
-                      className={`flex items-center gap-2 text-xs py-1.5 px-2 rounded cursor-pointer transition-colors ${
-                        selectedRobot === robot.id ? 'bg-blue-900/30 border border-blue-500' : 'bg-slate-800/50 hover:bg-slate-800'
-                      }`}
-                      onClick={() => setSelectedRobot(robot.id)}
-                    >
-                      <div
-                        className="w-2 h-2 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: STATUS_COLORS[robot.status] || '#4b5563' }}
-                      />
-                      <span className="font-mono font-medium text-white w-20 flex-shrink-0 truncate">{robot.name}</span>
-                      {robot.status === 'IDLE' ? (
-                        <span className="text-slate-500">standby</span>
-                      ) : robot.status === 'PICKING' ? (
-                        <span className="text-yellow-400 truncate">picking {targetObj?.name || 'object'}</span>
-                      ) : robot.status === 'CARRYING' ? (
-                        <span className="text-green-400 truncate">carrying → {targetZoneData?.name || '...'}</span>
-                      ) : robot.status === 'PLACING' ? (
-                        <span className="text-purple-400 truncate">placing at {targetZoneData?.name || '...'}</span>
-                      ) : robot.status === 'MOVING' ? (
-                        <span className="text-blue-400 truncate">moving to target</span>
-                      ) : robot.status === 'CHARGING' ? (
-                        <span className="text-cyan-400">charging</span>
-                      ) : (
-                        <span className="text-slate-400">{robot.status.toLowerCase()}</span>
-                      )}
-                      <span className="text-slate-600 ml-auto flex-shrink-0">{robot.battery}%</span>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-yellow-400">
+                      {state.tasks.filter(t => t.status === 'IN_PROGRESS').length}
                     </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+                    <div className="text-xs text-slate-400">In Progress</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-blue-400">
+                      {state.tasks.filter(t => t.status === 'PENDING').length}
+                    </div>
+                    <div className="text-xs text-slate-400">Pending</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-cyan-400">
+                      {Math.round(state.metrics.fleetEfficiency * 100)}%
+                    </div>
+                    <div className="text-xs text-slate-400">Efficiency</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-purple-400">
+                      {state.metrics.averageTaskTime.toFixed(1)}s
+                    </div>
+                    <div className="text-xs text-slate-400">Avg Time</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-        {/* Active Tasks — below fleet activity */}
-        {state && (
-          <Card className="bg-slate-900/50 border-slate-800">
-            <CardContent className="py-2 px-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Activity className="w-4 h-4 text-green-400 animate-pulse" />
-                <span className="text-sm font-medium text-white">Active Tasks</span>
-                <Badge variant="outline" className="text-yellow-400 border-yellow-500/50 text-xs ml-auto">
-                  {state.tasks.filter(t => t.status === 'IN_PROGRESS' || t.status === 'PENDING').length} queued
-                </Badge>
-              </div>
-              {state.tasks.filter(t => t.status === 'IN_PROGRESS' || t.status === 'PENDING').length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
-                  {state.tasks
-                    .filter(t => t.status === 'IN_PROGRESS' || t.status === 'PENDING')
-                    .slice(0, 6)
-                    .map(task => {
-                      const robot = task.assignedRobotId ? state.robots.find(r => r.id === task.assignedRobotId) : null;
+            {/* Live Fleet Activity + Active Tasks side by side */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Card className="bg-slate-900/50 border-slate-800">
+                <CardContent className="py-2 px-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Zap className="w-4 h-4 text-orange-400 animate-pulse" />
+                    <span className="text-sm font-medium text-white">Live Fleet Activity</span>
+                    <Badge variant="outline" className="text-green-400 border-green-500/50 text-xs ml-auto">
+                      {state.robots.filter(r => r.status !== 'IDLE').length}/{state.robots.length} active
+                    </Badge>
+                  </div>
+                  <div className="space-y-1">
+                    {state.robots.map(robot => {
+                      const task = state.tasks.find(t => t.assignedRobotId === robot.id && t.status === 'IN_PROGRESS');
+                      const targetObj = task?.objectId ? state.objects.find(o => o.id === task.objectId) : null;
+                      const targetZoneData = task?.targetZone ? activeZones.find(z => z.id === task.targetZone) : null;
                       return (
-                        <div key={task.id} className="flex items-center gap-2 text-xs py-1.5 px-2 rounded bg-slate-800/50">
+                        <div
+                          key={robot.id}
+                          className={`flex items-center gap-2 text-xs py-1 px-2 rounded cursor-pointer transition-colors ${
+                            selectedRobot === robot.id ? 'bg-blue-900/30 border border-blue-500' : 'bg-slate-800/50 hover:bg-slate-800'
+                          }`}
+                          onClick={() => setSelectedRobot(robot.id)}
+                        >
                           <div
                             className="w-2 h-2 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: task.status === 'IN_PROGRESS' ? '#3b82f6' : '#6b7280' }}
+                            style={{ backgroundColor: STATUS_COLORS[robot.status] || '#4b5563' }}
                           />
-                          <span className="text-white font-medium truncate">
-                            {task.type.replace(/_/g, ' ')}
-                          </span>
-                          <span className="text-slate-500 flex-shrink-0">
-                            {task.currentStep + 1}/{task.steps.length}
-                          </span>
-                          {robot && (
-                            <span className="text-blue-400 ml-auto flex-shrink-0 truncate max-w-[80px]">
-                              {robot.name}
-                            </span>
+                          <span className="font-mono font-medium text-white w-20 flex-shrink-0 truncate">{robot.name}</span>
+                          {robot.status === 'IDLE' ? (
+                            <span className="text-slate-500">standby</span>
+                          ) : robot.status === 'PICKING' ? (
+                            <span className="text-yellow-400 truncate">picking {targetObj?.name || 'object'}</span>
+                          ) : robot.status === 'CARRYING' ? (
+                            <span className="text-green-400 truncate">carrying → {targetZoneData?.name || '...'}</span>
+                          ) : robot.status === 'PLACING' ? (
+                            <span className="text-purple-400 truncate">placing at {targetZoneData?.name || '...'}</span>
+                          ) : robot.status === 'MOVING' ? (
+                            <span className="text-blue-400 truncate">moving to target</span>
+                          ) : robot.status === 'CHARGING' ? (
+                            <span className="text-cyan-400">charging</span>
+                          ) : (
+                            <span className="text-slate-400">{robot.status.toLowerCase()}</span>
                           )}
+                          <span className="text-slate-600 ml-auto flex-shrink-0">{robot.battery}%</span>
                         </div>
                       );
                     })}
-                </div>
-              ) : (
-                <div className="text-center text-slate-500 py-2 text-xs">
-                  No active tasks
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-slate-900/50 border-slate-800">
+                <CardContent className="py-2 px-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Activity className="w-4 h-4 text-green-400 animate-pulse" />
+                    <span className="text-sm font-medium text-white">Active Tasks</span>
+                    <Badge variant="outline" className="text-yellow-400 border-yellow-500/50 text-xs ml-auto">
+                      {state.tasks.filter(t => t.status === 'IN_PROGRESS' || t.status === 'PENDING').length} queued
+                    </Badge>
+                  </div>
+                  {state.tasks.filter(t => t.status === 'IN_PROGRESS' || t.status === 'PENDING').length > 0 ? (
+                    <div className="space-y-1">
+                      {state.tasks
+                        .filter(t => t.status === 'IN_PROGRESS' || t.status === 'PENDING')
+                        .slice(0, 6)
+                        .map(task => {
+                          const robot = task.assignedRobotId ? state.robots.find(r => r.id === task.assignedRobotId) : null;
+                          return (
+                            <div key={task.id} className="flex items-center gap-2 text-xs py-1 px-2 rounded bg-slate-800/50">
+                              <div
+                                className="w-2 h-2 rounded-full flex-shrink-0"
+                                style={{ backgroundColor: task.status === 'IN_PROGRESS' ? '#3b82f6' : '#6b7280' }}
+                              />
+                              <span className="text-white font-medium truncate">
+                                {task.type.replace(/_/g, ' ')}
+                              </span>
+                              <span className="text-slate-500 flex-shrink-0">
+                                {task.currentStep + 1}/{task.steps.length}
+                              </span>
+                              {robot && (
+                                <span className="text-blue-400 ml-auto flex-shrink-0 truncate max-w-[80px]">
+                                  {robot.name}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  ) : (
+                    <div className="text-center text-slate-500 py-2 text-xs">
+                      No active tasks
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         )}
       </div>
     </div>
